@@ -1,0 +1,93 @@
+import pandas as pd
+import openpyxl
+from openpyxl import load_workbook
+from openpyxl.worksheet.dimensions import ColumnDimension, DimensionHolder
+from openpyxl.utils import get_column_letter
+import string
+import requests
+from bs4 import BeautifulSoup
+from pandasql import sqldf
+pysqldf = lambda q: sqldf(q, globals())
+
+# Display settings
+pd.options.display.width = 0
+
+# Pull data from web
+url = "https://en.wikipedia.org/wiki/IBM_Award"
+data4 = requests.get(url).text
+
+# Parse data
+soup4 = BeautifulSoup(data4, 'html5lib')
+
+# Read data, create dataframe
+read_html_pandas_data = pd.read_html(url, match='Season')
+nba = read_html_pandas_data[0]
+print(type(nba))
+print(nba)
+
+# Cleaning up special characters
+nba[['Team', 'conference1']] = nba['Team'].str.split('(', 1, expand=True)
+nba['Team'] = nba['Team'].str.rstrip()
+nba[['Player', 'p']] = nba['Player'].str.split('*', 1, expand=True)
+nba[['Nationality', 'p2']] = nba['Nationality'].str.split('[', 1, expand=True)
+
+nba.drop(['conference1', 'p', 'p2'], axis=1, inplace=True)
+print(nba.head())
+
+# SQL
+my_output = pysqldf("""select Position, count(Position) as [IBM Award Count]
+            from nba
+            group by Position
+            order by [IBM Award Count] desc""")
+
+print(my_output)
+
+a = pysqldf("""select Player, Team, Position, count(Player) as [IBM Award Count]
+            from nba
+            group by Player, Team, Position
+            order by [IBM Award Count] desc""")
+
+print(a)
+
+uniqnames = nba.Player.unique()  # get unique names
+newdata = []                 # data list for output dataframe
+for u in uniqnames:          # for each unique name
+    subdf = nba[nba.Player == u]  # get rows with this unique name
+    s = ""
+    for i in subdf['Season']:
+        s += ""+i+","      # join all info cells for that name
+    newdata.append([u, s[:-1]])  # remove trailing comma from infos & add row to data list
+
+newdf = pd.DataFrame(data=newdata, columns=['Player', 'Season'])
+print(newdf)
+
+# To create final join
+c = pysqldf("""select a.Player, a.Team, a.Position, a.[IBM Award Count], newdf.Season
+            from a
+            inner join newdf on
+            a.Player = newdf.Player""")
+
+print(c)
+
+# Create name of the file
+file_name = 'NBA_IBM_Award_Winners.xlsx'
+
+# Saving the Excel
+c.to_excel(file_name, sheet_name='Winners', index=False)
+
+wb = openpyxl.load_workbook('NBA_IBM_Award_Winners.xlsx')
+sheet = wb['Winners']
+
+# Remove gridlines
+sheet.sheet_view.showGridLines = False
+
+# Auto adjust column width in Excel sheet
+dim_holder = DimensionHolder(worksheet=sheet)
+
+for col in range(sheet.min_column, sheet.max_column + 1):
+    dim_holder[get_column_letter(col)] = ColumnDimension(sheet, min=col, max=col, width=20)
+
+sheet.column_dimensions = dim_holder
+
+# Save the Excel file to your folder where your Python script is located
+wb.save('NBA_IBM_Award_Winners.xlsx')
